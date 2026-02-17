@@ -1,0 +1,179 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import ChatWindow from '@/components/chat/ChatWindow';
+import ChatInput from '@/components/chat/ChatInput';
+import Header from '@/components/layout/Header';
+import Sidebar, { Conversation } from '@/components/layout/Sidebar';
+import { Message } from '@/components/chat/ChatMessage';
+import { DocumentSource } from '@/types/message';
+import DocumentViewer from '@/components/document/DocumentViewer';
+import { useChat } from '@/lib/hooks/useRAG';
+import { useDocumentUpload, useDocuments } from '@/lib/hooks/useDocuments';
+
+/**
+ * Chat page with PageIndex RAG integration.
+ *
+ * Flow:
+ * 1. User uploads a PDF → PageIndex processes it (builds tree structure)
+ * 2. User asks a question → Backend calls PageIndex Chat API
+ * 3. PageIndex internally: reads tree → LLM reasons about relevant sections → reads content → generates answer with citations
+ * 4. Backend: parses <doc=file;page=N> citations → fetches tree nodes → extracts highlights → returns normalized response
+ * 5. Frontend: renders answer with [1][2][3] inline citations + source cards + document viewer
+ */
+export default function ChatPage() {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string>();
+  const [activeDocId, setActiveDocId] = useState<string | undefined>();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [selectedDocumentSources, setSelectedDocumentSources] = useState<DocumentSource[] | null>(null);
+  const [selectedSourceIndex, setSelectedSourceIndex] = useState(0);
+
+  // PageIndex-aware hooks
+  const { messages, sendMessage, clearMessages, isProcessing, isSearchingDoc } = useChat({
+    useStreaming: true,
+    conversationId: activeConversationId,
+    docId: activeDocId,
+    enableCitations: true,
+  });
+
+  const { uploadDocuments, isUploading, processingStatus } = useDocumentUpload();
+  const { documents, fetchDocuments } = useDocuments();
+
+  // Load documents on mount
+  useEffect(() => {
+    fetchDocuments();
+  }, [fetchDocuments]);
+
+  const handleSendMessage = async (content: string, files?: File[]) => {
+    // If files are attached, upload them first
+    if (files && files.length > 0) {
+      try {
+        const uploadResponse = await uploadDocuments({ files }, true /* waitForReady */);
+        const newDocId = uploadResponse.documents[0]?.id;
+        if (newDocId) {
+          setActiveDocId(newDocId);
+        }
+      } catch (err) {
+        console.error('Upload failed:', err);
+      }
+    }
+
+    // Send the message (useChat handles adding messages + streaming)
+    await sendMessage(content, files);
+
+    // Update conversations list
+    updateConversations(content);
+  };
+
+  const updateConversations = (userMsg: string) => {
+    if (activeConversationId) {
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.id === activeConversationId
+            ? { ...conv, lastMessage: userMsg.substring(0, 50), timestamp: new Date() }
+            : conv
+        )
+      );
+    } else {
+      const newConversation: Conversation = {
+        id: Date.now().toString(),
+        title: userMsg.substring(0, 30) + (userMsg.length > 30 ? '...' : ''),
+        lastMessage: userMsg.substring(0, 50),
+        timestamp: new Date(),
+      };
+      setConversations((prev) => [newConversation, ...prev]);
+      setActiveConversationId(newConversation.id);
+    }
+  };
+
+  const handleNewChat = () => {
+    clearMessages();
+    setActiveConversationId(undefined);
+    setActiveDocId(undefined);
+    setIsSidebarOpen(false);
+  };
+
+  const handleSelectConversation = (id: string) => {
+    setActiveConversationId(id);
+    clearMessages();
+    setIsSidebarOpen(false);
+  };
+
+  const handleSourceClick = (source: DocumentSource) => {
+    const message = messages.find(
+      (msg) => msg.sources?.some((s) => s.id === source.id)
+    );
+    if (message?.sources) {
+      const sourceIndex = message.sources.findIndex((s) => s.id === source.id);
+      setSelectedSourceIndex(sourceIndex);
+      setSelectedDocumentSources(message.sources);
+    }
+  };
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
+      <Sidebar
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        onNewChat={handleNewChat}
+        onSelectConversation={handleSelectConversation}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+      />
+
+      <div className="flex flex-col flex-1 min-w-0">
+        <Header
+          onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          title="RAG Chat Assistant"
+          showExpandButton={isSidebarCollapsed}
+          onExpandClick={() => setIsSidebarCollapsed(false)}
+        />
+
+        {/* Upload / processing status bar */}
+        {(isUploading || processingStatus === 'processing') && (
+          <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm flex items-center gap-2">
+            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            {isUploading
+              ? 'Uploading document...'
+              : 'PageIndex is processing your document (building tree structure)...'}
+          </div>
+        )}
+
+        {/* "Searching document..." indicator during PageIndex tree search */}
+        <ChatWindow
+          messages={messages}
+          isTyping={isProcessing}
+          onSourceClick={handleSourceClick}
+        />
+
+        {isSearchingDoc && (
+          <div className="px-4 py-2 text-center text-sm text-gray-500 dark:text-gray-400 animate-pulse">
+            🔍 Searching document sections...
+          </div>
+        )}
+
+        <ChatInput
+          onSendMessage={handleSendMessage}
+          disabled={isProcessing || isUploading}
+          placeholder={activeDocId ? 'Ask about your document...' : 'Upload a document or ask a question...'}
+        />
+      </div>
+
+      {/* Document Viewer Modal */}
+      {selectedDocumentSources && (
+        <DocumentViewer
+          sources={selectedDocumentSources}
+          initialSourceIndex={selectedSourceIndex}
+          onClose={() => setSelectedDocumentSources(null)}
+        />
+      )}
+    </div>
+  );
+}
