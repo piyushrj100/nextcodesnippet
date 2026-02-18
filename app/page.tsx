@@ -6,7 +6,7 @@ import ChatInput from '@/components/chat/ChatInput';
 import Header from '@/components/layout/Header';
 import Sidebar, { Conversation } from '@/components/layout/Sidebar';
 import { Message } from '@/components/chat/ChatMessage';
-import { DocumentSource } from '@/types/message';
+import { DocumentSource, ToolCall } from '@/types/message';
 import DocumentViewer from '@/components/document/DocumentViewer';
 import { sampleTreeData } from '@/components/tree';
 
@@ -32,6 +32,111 @@ export default function Home() {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsTyping(true);
+
+    // Check for "tools" trigger → show tool calling demo
+    if (content.trim().toLowerCase() === 'tools') {
+      // Create initial message with pending tool calls
+      const toolCalls: ToolCall[] = [
+        {
+          id: 'tool-1',
+          name: 'search_documents',
+          status: 'pending',
+          input: { query: content, limit: 5 },
+        },
+        {
+          id: 'tool-2',
+          name: 'retrieve_context',
+          status: 'pending',
+          input: { documentIds: ['doc-1', 'doc-2'] },
+        },
+        {
+          id: 'tool-3',
+          name: 'generate_summary',
+          status: 'pending',
+        },
+      ];
+
+      const assistantMessageId = (Date.now() + 1).toString();
+      
+      // Add message with pending tool calls
+      setMessages((prev) => [...prev, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date(),
+        toolCalls: [...toolCalls],
+      }]);
+
+      // Simulate tool execution one by one
+      const updateToolCall = (index: number, updates: Partial<ToolCall>) => {
+        setMessages((prev) => prev.map(msg => {
+          if (msg.id === assistantMessageId && msg.toolCalls) {
+            const newToolCalls = [...msg.toolCalls];
+            newToolCalls[index] = { ...newToolCalls[index], ...updates };
+            return { ...msg, toolCalls: newToolCalls };
+          }
+          return msg;
+        }));
+      };
+
+      // Tool 1: Search documents
+      setTimeout(() => {
+        updateToolCall(0, { status: 'running', startTime: new Date() });
+      }, 300);
+
+      setTimeout(() => {
+        updateToolCall(0, { 
+          status: 'completed', 
+          endTime: new Date(),
+          output: 'Found 3 relevant documents matching the query.'
+        });
+        updateToolCall(1, { status: 'running', startTime: new Date() });
+      }, 1200);
+
+      // Tool 2: Retrieve context
+      setTimeout(() => {
+        updateToolCall(1, { 
+          status: 'completed', 
+          endTime: new Date(),
+          output: 'Retrieved context from 2 document sections.'
+        });
+        updateToolCall(2, { status: 'running', startTime: new Date() });
+      }, 2200);
+
+      // Tool 3: Generate summary & final response
+      setTimeout(() => {
+        updateToolCall(2, { 
+          status: 'completed', 
+          endTime: new Date(),
+          output: 'Summary generated successfully.'
+        });
+        
+        // Update with final content
+        setMessages((prev) => prev.map(msg => {
+          if (msg.id === assistantMessageId) {
+            return { 
+              ...msg, 
+              content: `## Tool Calling Demo Complete! 🛠️
+
+I just demonstrated the tool calling workflow that modern LLMs use:
+
+1. **Search Documents** - Found relevant documents in your knowledge base
+2. **Retrieve Context** - Extracted the most relevant passages
+3. **Generate Summary** - Synthesized the information into a response
+
+You can click on each step above to expand and see the inputs/outputs!
+
+This pattern is commonly used in RAG (Retrieval-Augmented Generation) systems.`
+            };
+          }
+          return msg;
+        }));
+        setIsTyping(false);
+        updateConversations(content, 'Tool calling demo completed');
+      }, 3200);
+
+      return;
+    }
 
     // Check for "test" trigger → show tree visualization
     if (content.trim().toLowerCase() === 'test') {

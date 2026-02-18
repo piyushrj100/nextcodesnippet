@@ -47,4 +47,17 @@ export interface Message {
   content: string;
   timestamp: Date;
   sources?: DocumentSource[];
+  toolCalls?: ToolCall[];
+}
+
+// Tool Call types for showing LLM tool usage steps
+export interface ToolCall {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'completed' | 'error';
+  input?: Record<string, unknown>;
+  output?: string;
+  error?: string;
+  startTime?: Date;
+  endTime?: Date;
 }

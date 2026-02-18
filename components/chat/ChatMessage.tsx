@@ -2,7 +2,8 @@ import React from 'react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { UserIcon } from '../icons/UserIcon';
 import SourceCitation from '../document/SourceCitation';
-import { DocumentSource } from '@/types/message';
+import { DocumentSource, ToolCall } from '@/types/message';
+import ToolCallSteps from './ToolCallSteps';
 import dynamic from 'next/dynamic';
 import type { TreeNode, TreeSchema } from '../tree/types';
 
@@ -30,6 +31,7 @@ export interface Message {
   sources?: DocumentSource[];
   treeData?: TreeNode;
   treeSchema?: TreeSchema;
+  toolCalls?: ToolCall[];
 }
 
 interface ChatMessageProps {
@@ -82,6 +84,11 @@ export default function ChatMessage({ message, onSourceClick }: ChatMessageProps
           AI
         </div>
         <div className="flex-1 min-w-0">
+          {/* Tool Call Steps - shown before the response */}
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <ToolCallSteps toolCalls={message.toolCalls} />
+          )}
+
           <div className="prose prose-sm dark:prose-invert max-w-none">
             <MarkdownRenderer content={message.content} onCitationClick={handleCitationClick} />
           </div>
